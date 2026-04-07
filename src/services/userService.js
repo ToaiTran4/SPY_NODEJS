@@ -1,107 +1,98 @@
 const bcrypt = require('bcryptjs');
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
+const User = require('../models/User');
+const UserStats = require('../models/UserStats');
 
 async function findByUsername(username) {
-  return getDb().collection('users').findOne({ username });
+  return User.findOne({ username });
 }
 
 async function findByEmail(email) {
-  return getDb().collection('users').findOne({ email });
+  return User.findOne({ email });
 }
 
 async function findById(id) {
-  return getDb().collection('users').findOne({ _id: new ObjectId(id) });
+  return User.findById(id);
 }
 
 async function findByUsernameOrEmail(identifier) {
-  return getDb().collection('users').findOne({
+  return User.findOne({
     $or: [{ username: identifier }, { email: identifier }]
   });
 }
 
 async function findAll() {
-  return getDb().collection('users').find({}).toArray();
+  return User.find({});
 }
 
 async function countUsers() {
-  return getDb().collection('users').countDocuments();
+  return User.countDocuments();
 }
 
 async function registerUser(username, email, password, displayName, role = 'ROLE_USER') {
-  const db = getDb();
-
   if (!email || !email.trim()) throw new Error('Email is required');
   if (!username || !username.trim()) throw new Error('Username is required');
 
-  const existingUsername = await db.collection('users').findOne({ username });
+  const existingUsername = await User.findOne({ username });
   if (existingUsername) throw new Error('Username already exists');
 
-  const existingEmail = await db.collection('users').findOne({ email });
+  const existingEmail = await User.findOne({ email });
   if (existingEmail) throw new Error('Email already exists');
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const hashedPassword = await bcrypt.hash(password, 12);
 
-  const user = {
+  const user = new User({
     username,
     email,
-    passwordHash,
+    password: hashedPassword,
     displayName: displayName || username,
-    avatarUrl: null,
     role,
     balance: 100, // Starting balance
     rankingPoints: 0,
-    resetToken: null,
-    resetTokenExpiry: null,
-    lastCheckinDate: null,
-    checkinStreak: 0,
-    inventory: {},
     active: true,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  });
 
-  const result = await db.collection('users').insertOne(user);
-  user._id = result.insertedId;
+  await user.save();
 
   // Create user stats
-  await db.collection('user_stats').insertOne({
-    userId: result.insertedId.toString(),
+  await UserStats.create({
+    userId: user._id.toString(),
     totalGames: 0,
-    winsSpy: 0,
-    winsCivilian: 0,
-    winsInfected: 0,
-    timesAsSpy: 0,
-    timesInfected: 0,
-    correctVotes: 0,
-    updatedAt: new Date(),
+    gamesWon: 0,
+    spyGames: 0,
+    spyWins: 0,
+    civilianGames: 0,
+    civilianWins: 0,
+    infectedCount: 0,
+    afkCount: 0,
   });
 
   return user;
 }
 
 async function saveUser(user) {
-  const db = getDb();
-  const { _id, ...update } = user;
-  update.updatedAt = new Date();
-  await db.collection('users').updateOne({ _id: new ObjectId(_id.toString()) }, { $set: update });
-  return user;
+  if (user instanceof User) {
+    return user.save();
+  }
+  // If it's a plain object, we need to find and update
+  const { _id, ...updateData } = user;
+  return User.findByIdAndUpdate(_id, updateData, { new: true });
 }
 
 async function updateById(id, fields) {
-  const db = getDb();
-  fields.updatedAt = new Date();
-  await db.collection('users').updateOne({ _id: new ObjectId(id) }, { $set: fields });
-  return findById(id);
+  return User.findByIdAndUpdate(id, { $set: fields }, { new: true });
 }
 
 async function generateResetToken(user) {
   const token = String(Math.floor(Math.random() * 999999)).padStart(6, '0');
   const expiry = new Date(Date.now() + 15 * 60 * 1000); // 15 min
-  await getDb().collection('users').updateOne(
-    { _id: user._id },
-    { $set: { resetToken: token, resetTokenExpiry: expiry } }
-  );
+  
+  if (user instanceof User) {
+    user.resetToken = token;
+    user.resetTokenExpiry = expiry;
+    await user.save();
+  } else {
+    await User.findByIdAndUpdate(user._id, { $set: { resetToken: token, resetTokenExpiry: expiry } });
+  }
   return token;
 }
 
@@ -121,24 +112,22 @@ async function processPasswordReset(email, token, newPassword) {
   if (user.resetToken !== token || !user.resetTokenExpiry || user.resetTokenExpiry < new Date()) {
     return false;
   }
-  const passwordHash = await bcrypt.hash(newPassword, 12);
-  await getDb().collection('users').updateOne(
-    { _id: user._id },
-    { $set: { passwordHash, resetToken: null, resetTokenExpiry: null, updatedAt: new Date() } }
-  );
+  const hashedPassword = await bcrypt.hash(newPassword, 12);
+  user.password = hashedPassword;
+  user.resetToken = null;
+  user.resetTokenExpiry = null;
+  await user.save();
   return true;
 }
 
 async function changePassword(username, oldPassword, newPassword) {
   const user = await findByUsername(username);
   if (!user) throw new Error('User not found');
-  const match = await bcrypt.compare(oldPassword, user.passwordHash);
+  const match = await bcrypt.compare(oldPassword, user.password);
   if (!match) return false;
-  const passwordHash = await bcrypt.hash(newPassword, 12);
-  await getDb().collection('users').updateOne(
-    { _id: user._id },
-    { $set: { passwordHash, updatedAt: new Date() } }
-  );
+  const hashedPassword = await bcrypt.hash(newPassword, 12);
+  user.password = hashedPassword;
+  await user.save();
   return true;
 }
 
@@ -147,8 +136,8 @@ async function updateActiveStatus(id, active) {
 }
 
 async function resetPassword(id, newPassword) {
-  const passwordHash = await bcrypt.hash(newPassword, 12);
-  return updateById(id, { passwordHash });
+  const hashedPassword = await bcrypt.hash(newPassword, 12);
+  return updateById(id, { password: hashedPassword });
 }
 
 async function updateRole(id, role) {
@@ -156,8 +145,29 @@ async function updateRole(id, role) {
 }
 
 async function validatePassword(user, password) {
-  return bcrypt.compare(password, user.passwordHash);
+  return bcrypt.compare(password, user.password);
 }
+
+module.exports = {
+  findByUsername,
+  findByEmail,
+  findById,
+  findByUsernameOrEmail,
+  findAll,
+  countUsers,
+  registerUser,
+  saveUser,
+  updateById,
+  generateResetToken,
+  verifyResetToken,
+  processPasswordReset,
+  changePassword,
+  updateActiveStatus,
+  resetPassword,
+  updateRole,
+  validatePassword,
+};
+
 
 module.exports = {
   findByUsername,

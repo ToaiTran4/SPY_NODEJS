@@ -1,7 +1,7 @@
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
+const Room = require('../models/Room');
+const RoomPlayer = require('../models/RoomPlayer');
+const User = require('../models/User');
 const economyService = require('./economyService');
-const settingsService = require('./settingsService');
 
 let _io = null; // STOMP server broadcast helper
 let _gameService = null;
@@ -19,27 +19,25 @@ function generateRoomCode() {
 }
 
 async function ensureUniqueCode(base) {
-  const db = getDb();
-  const existing = await db.collection('rooms').findOne({ roomCode: base });
+  const existing = await Room.findOne({ roomCode: base });
   if (existing) return ensureUniqueCode(generateRoomCode());
   return base;
 }
 
 async function createRoom(hostUserId, isPrivate, customRoomCode) {
-  const db = getDb();
-  const host = await db.collection('users').findOne({ _id: new ObjectId(hostUserId) });
+  const host = await User.findById(hostUserId);
   if (!host) throw new Error('User not found');
 
   let roomCode = customRoomCode && customRoomCode.trim() ? customRoomCode.trim() : generateRoomCode();
 
   if (customRoomCode && customRoomCode.trim()) {
-    const existing = await db.collection('rooms').findOne({ roomCode });
+    const existing = await Room.findOne({ roomCode });
     if (existing) throw new Error('Room code already exists');
   } else {
     roomCode = await ensureUniqueCode(roomCode);
   }
 
-  const room = {
+  const room = new Room({
     roomCode,
     hostId: hostUserId,
     isPrivate: !!isPrivate,
@@ -48,12 +46,9 @@ async function createRoom(hostUserId, isPrivate, customRoomCode) {
     status: 'waiting',
     specialRound: false,
     adminSelectedSpyId: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  });
 
-  const result = await db.collection('rooms').insertOne(room);
-  room._id = result.insertedId;
+  await room.save();
 
   return joinRoom(room.roomCode, hostUserId);
 }
@@ -67,100 +62,81 @@ async function createSpecialRoom(hostUserId, isPrivate, customRoomCode) {
   );
 
   const room = await createRoom(hostUserId, isPrivate, customRoomCode);
-  const db = getDb();
-  await db.collection('rooms').updateOne(
-    { _id: room._id },
-    { $set: { specialRound: true, updatedAt: new Date() } }
-  );
   room.specialRound = true;
+  await room.save();
   return room;
 }
 
 async function joinRoom(roomCode, userId) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ roomCode });
+  const room = await Room.findOne({ roomCode });
   if (!room) throw new Error('Room not found');
 
   if (room.status !== 'waiting') throw new Error('Room is not available');
   if (room.currentPlayers >= room.maxPlayers) throw new Error('Room is full');
 
   // Already in room?
-  const existing = await db.collection('room_players').findOne({ roomId: room._id.toString(), userId });
+  const existing = await RoomPlayer.findOne({ roomId: room._id.toString(), userId });
   if (existing) return room;
 
-  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+  const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
 
   const wsUsername = user.username || user.email;
-  await db.collection('room_players').insertOne({
+  await RoomPlayer.create({
     roomId: room._id.toString(),
     userId,
-    username: wsUsername,
     displayName: user.displayName || wsUsername,
-    joinedAt: new Date(),
   });
 
-  const updatedRoom = await db.collection('rooms').findOneAndUpdate(
-    { _id: room._id },
-    { $inc: { currentPlayers: 1 }, $set: { updatedAt: new Date() } },
-    { returnDocument: 'after' }
-  );
+  room.currentPlayers += 1;
+  await room.save();
 
-  broadcastRoomUpdate(updatedRoom);
-  broadcastLobbyRoomEvent(updatedRoom, 'UPDATED');
-  return updatedRoom;
+  broadcastRoomUpdate(room);
+  broadcastLobbyRoomEvent(room, 'UPDATED');
+  return room;
 }
 
 async function leaveRoom(roomId, userId) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ _id: new ObjectId(roomId) });
+  const room = await Room.findById(roomId);
   if (!room) throw new Error('Room not found');
 
   if (room.status === 'in_game' && _gameService) {
     _gameService.handlePlayerQuit(roomId, userId);
   }
 
-  await db.collection('room_players').deleteOne({ roomId, userId });
+  await RoomPlayer.deleteOne({ roomId, userId });
 
   const newCount = Math.max(0, room.currentPlayers - 1);
   if (newCount <= 0) {
-    await db.collection('rooms').deleteOne({ _id: room._id });
+    await Room.deleteOne({ _id: room._id });
     broadcastLobbyRoomEvent(room, 'DELETED');
     return;
   }
 
-  let updates = { currentPlayers: newCount, updatedAt: new Date() };
+  room.currentPlayers = newCount;
   if (room.hostId === userId) {
-    const remaining = await db.collection('room_players').find({ roomId }).toArray();
+    const remaining = await RoomPlayer.find({ roomId });
     if (remaining.length > 0) {
-      updates.hostId = remaining[0].userId;
+      room.hostId = remaining[0].userId;
     }
   }
 
-  const updatedRoom = await db.collection('rooms').findOneAndUpdate(
-    { _id: room._id },
-    { $set: updates },
-    { returnDocument: 'after' }
-  );
+  await room.save();
 
-  broadcastRoomUpdate(updatedRoom);
-  broadcastLobbyRoomEvent(updatedRoom, 'UPDATED');
+  broadcastRoomUpdate(room);
+  broadcastLobbyRoomEvent(room, 'UPDATED');
 }
 
 async function kickPlayer(roomId, hostId, targetUserId) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ _id: new ObjectId(roomId) });
+  const room = await Room.findById(roomId);
   if (!room) throw new Error('Room not found');
   if (room.hostId !== hostId) throw new Error('Only host can kick players');
   if (hostId === targetUserId) throw new Error('Host cannot kick themselves');
 
-  await db.collection('room_players').deleteOne({ roomId, userId: targetUserId });
+  await RoomPlayer.deleteOne({ roomId, userId: targetUserId });
 
-  const updatedRoom = await db.collection('rooms').findOneAndUpdate(
-    { _id: room._id },
-    { $inc: { currentPlayers: -1 }, $set: { updatedAt: new Date() } },
-    { returnDocument: 'after' }
-  );
+  room.currentPlayers = Math.max(0, room.currentPlayers - 1);
+  await room.save();
 
   // Notify via STOMP
   if (_io) {
@@ -171,89 +147,82 @@ async function kickPlayer(roomId, hostId, targetUserId) {
     });
   }
 
-  broadcastRoomUpdate(updatedRoom);
-  broadcastLobbyRoomEvent(updatedRoom, 'UPDATED');
+  broadcastRoomUpdate(room);
+  broadcastLobbyRoomEvent(room, 'UPDATED');
 }
 
 async function transferHost(roomId, currentHostId, newHostId) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ _id: new ObjectId(roomId) });
+  const room = await Room.findById(roomId);
   if (!room) throw new Error('Room not found');
   if (room.hostId !== currentHostId) throw new Error('Only host can transfer rights');
 
-  const inRoom = await db.collection('room_players').findOne({ roomId, userId: newHostId });
+  const inRoom = await RoomPlayer.findOne({ roomId, userId: newHostId });
   if (!inRoom) throw new Error('New host must be in the room');
 
-  const updatedRoom = await db.collection('rooms').findOneAndUpdate(
-    { _id: room._id },
-    { $set: { hostId: newHostId, updatedAt: new Date() } },
-    { returnDocument: 'after' }
-  );
-  broadcastRoomUpdate(updatedRoom);
+  room.hostId = newHostId;
+  await room.save();
+  broadcastRoomUpdate(room);
 }
 
 async function getPublicRooms() {
-  return getDb().collection('rooms').find({ status: 'waiting', isPrivate: false }).toArray();
+  return Room.find({ status: 'waiting', isPrivate: false });
 }
 
 async function getPlayersInRoom(roomId) {
-  return getDb().collection('room_players').find({ roomId }).toArray();
+  return RoomPlayer.find({ roomId });
 }
 
 async function getRoomById(roomId) {
-  const room = await getDb().collection('rooms').findOne({ _id: new ObjectId(roomId) });
+  const room = await Room.findById(roomId);
   if (!room) throw new Error('Room not found');
   return room;
 }
 
 async function getRoomByCode(roomCode) {
-  const room = await getDb().collection('rooms').findOne({ roomCode });
+  const room = await Room.findOne({ roomCode });
   if (!room) throw new Error(`Room not found with code: ${roomCode}`);
   return room;
 }
 
 async function findAllRooms() {
-  return getDb().collection('rooms').find({}).toArray();
+  return Room.find({});
 }
 
 async function deleteRoom(roomId) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ _id: new ObjectId(roomId) });
-  await db.collection('rooms').deleteOne({ _id: new ObjectId(roomId) });
-  if (room) broadcastLobbyRoomEvent(room, 'DELETED');
+  const room = await Room.findById(roomId);
+  if (room) {
+    await Room.deleteOne({ _id: roomId });
+    broadcastLobbyRoomEvent(room, 'DELETED');
+  }
 }
 
 async function countActiveRooms() {
-  return getDb().collection('rooms').countDocuments();
+  return Room.countDocuments();
 }
 
 async function addPlayerAdmin(roomId, identifier) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ _id: new ObjectId(roomId) });
+  const room = await Room.findById(roomId);
   if (!room) throw new Error('Room not found');
 
-  const user = await db.collection('users').findOne({
+  const user = await User.findOne({
     $or: [{ username: identifier }, { email: identifier }]
   });
   if (!user) throw new Error(`User not found with username/email: ${identifier}`);
 
-  const alreadyIn = await db.collection('room_players').findOne({ roomId, userId: user._id.toString() });
+  const alreadyIn = await RoomPlayer.findOne({ roomId, userId: user._id.toString() });
   if (!alreadyIn) {
-    await db.collection('room_players').insertOne({
+    await RoomPlayer.create({
       roomId,
       userId: user._id.toString(),
-      username: user.username || user.email,
       displayName: user.displayName || user.username,
-      joinedAt: new Date(),
     });
-    const updatedRoom = await db.collection('rooms').findOneAndUpdate(
-      { _id: room._id },
-      { $inc: { currentPlayers: 1 }, $set: { updatedAt: new Date() } },
-      { returnDocument: 'after' }
-    );
-    broadcastRoomUpdate(updatedRoom);
-    broadcastLobbyRoomEvent(updatedRoom, 'UPDATED');
-    return updatedRoom;
+    
+    room.currentPlayers += 1;
+    await room.save();
+    
+    broadcastRoomUpdate(room);
+    broadcastLobbyRoomEvent(room, 'UPDATED');
+    return room;
   }
 
   broadcastRoomUpdate(room);
@@ -306,3 +275,4 @@ module.exports = {
   addPlayerAdmin,
   broadcastRoomUpdate,
 };
+

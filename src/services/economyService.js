@@ -1,31 +1,25 @@
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
-
-async function findById(id) {
-  return getDb().collection('users').findOne({ _id: new ObjectId(id) });
-}
+const User = require('../models/User');
+const Transaction = require('../models/Transaction');
+const UserStats = require('../models/UserStats');
 
 async function updateBalance(userId, delta) {
-  await getDb().collection('users').updateOne(
-    { _id: new ObjectId(userId) },
-    { $inc: { balance: delta }, $set: { updatedAt: new Date() } }
-  );
+  return User.findByIdAndUpdate(userId, { $inc: { balance: delta } }, { new: true });
 }
 
 async function logTransaction(userId, amount, type, description) {
-  await getDb().collection('transactions').insertOne({
+  return Transaction.create({
     userId,
     amount,
     type,
     description,
-    createdAt: new Date(),
   });
 }
 
 async function deductEntryFee(userId, fee) {
-  const user = await findById(userId);
+  const user = await User.findById(userId);
   if (!user) throw new Error(`User not found: ${userId}`);
   if (user.balance < fee) throw new Error(`Insufficient balance for user: ${userId}`);
+  
   await updateBalance(userId, -fee);
   if (fee > 0) await logTransaction(userId, -fee, 'BET', 'Phí vào cửa ván đấu');
 }
@@ -34,49 +28,46 @@ async function addReward(userId, amount, type, description, addToRanking = false
   const updateFields = { balance: amount };
   if (addToRanking) updateFields.rankingPoints = amount;
 
-  await getDb().collection('users').updateOne(
-    { _id: new ObjectId(userId) },
-    { $inc: updateFields, $set: { updatedAt: new Date() } }
-  );
+  await User.findByIdAndUpdate(userId, { $inc: updateFields });
   await logTransaction(userId, amount, type, description);
 }
 
 async function deductBalance(userId, amount, type, description) {
-  const user = await findById(userId);
+  const user = await User.findById(userId);
   if (!user) throw new Error(`User not found: ${userId}`);
   if (user.balance < amount) throw new Error('Số dư không đủ');
+  
   await updateBalance(userId, -amount);
   await logTransaction(userId, -amount, type, description);
 }
 
 async function applyRelief(userId) {
-  const user = await findById(userId);
+  const user = await User.findById(userId);
   if (!user) throw new Error(`User not found: ${userId}`);
   if (user.balance >= 10) throw new Error('User still has enough balance for relief');
+  
   const reliefAmount = 50;
   await updateBalance(userId, reliefAmount);
   await logTransaction(userId, reliefAmount, 'RELIEF', 'Quà cứu trợ Bankruptcy Relief');
 }
 
 async function hasCheckedInToday(userId) {
-  const user = await findById(userId);
-  if (!user) return false;
-  if (!user.lastCheckinDate) return false;
+  const user = await User.findById(userId);
+  if (!user || !user.lastCheckinDate) return false;
+  
   const today = new Date().toISOString().split('T')[0];
-  const lastDate = user.lastCheckinDate instanceof Date
-    ? user.lastCheckinDate.toISOString().split('T')[0]
-    : user.lastCheckinDate;
+  const lastDate = user.lastCheckinDate.toISOString().split('T')[0];
   return lastDate === today;
 }
 
 async function dailyCheckin(userId) {
-  const user = await findById(userId);
+  const user = await User.findById(userId);
   if (!user) throw new Error(`User not found: ${userId}`);
 
   const today = new Date().toISOString().split('T')[0];
-  const lastDate = user.lastCheckinDate instanceof Date
+  const lastDate = user.lastCheckinDate 
     ? user.lastCheckinDate.toISOString().split('T')[0]
-    : (user.lastCheckinDate || null);
+    : null;
 
   if (lastDate === today) throw new Error('Bạn đã điểm danh hôm nay rồi!');
 
@@ -92,13 +83,10 @@ async function dailyCheckin(userId) {
   const rewards = [10, 10, 10, 10, 20, 20, 30];
   const checkinAmount = rewards[newStreak - 1];
 
-  await getDb().collection('users').updateOne(
-    { _id: new ObjectId(userId) },
-    {
-      $inc: { balance: checkinAmount },
-      $set: { lastCheckinDate: new Date(), checkinStreak: newStreak, updatedAt: new Date() }
-    }
-  );
+  user.balance += checkinAmount;
+  user.lastCheckinDate = new Date();
+  user.checkinStreak = newStreak;
+  await user.save();
 
   await logTransaction(userId, checkinAmount, 'DAILY_CHECKIN', `Điểm danh hàng ngày (Ngày ${newStreak}) +${checkinAmount} xu`);
 
@@ -106,14 +94,13 @@ async function dailyCheckin(userId) {
 }
 
 async function getLeaderboard(type) {
-  const db = getDb();
-
   if (type === 'spy' || type === 'civilian') {
-    const field = type === 'spy' ? 'winsSpy' : 'winsCivilian';
-    const stats = await db.collection('user_stats').find({}).sort({ [field]: -1 }).limit(50).toArray();
+    const field = type === 'spy' ? 'spyWins' : 'civilianWins';
+    const stats = await UserStats.find({}).sort({ [field]: -1 }).limit(50);
+    
     const result = [];
     for (const s of stats) {
-      const u = await db.collection('users').findOne({ _id: new ObjectId(s.userId) });
+      const u = await User.findById(s.userId);
       if (u) {
         result.push({
           username: u.username,
@@ -127,7 +114,7 @@ async function getLeaderboard(type) {
   }
 
   // Default: balance
-  const users = await db.collection('users').find({}).sort({ balance: -1 }).limit(50).toArray();
+  const users = await User.find({}).sort({ balance: -1 }).limit(50);
   return users.map(u => ({
     username: u.username,
     display_name: u.displayName,
@@ -155,3 +142,4 @@ module.exports = {
   getLeaderboard,
   calculateRankTier,
 };
+

@@ -1,26 +1,21 @@
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
+const Match = require('../models/Match');
+const MatchPlayer = require('../models/MatchPlayer');
 
 const getHistory = async (req, res) => {
   try {
-    const db = getDb();
-    
     // Find last 20 match player entries for this user
-    const playerEntries = await db.collection('match_players')
+    const playerEntries = await MatchPlayer
       .find({ userId: req.userId })
       .sort({ _id: -1 })
-      .limit(20)
-      .toArray();
+      .limit(20);
 
     if (playerEntries.length === 0) {
       return res.json([]);
     }
 
     // Get the corresponding match metadata for these entries
-    const matchIds = playerEntries.map(e => new ObjectId(e.matchId));
-    const matches = await db.collection('matches')
-      .find({ _id: { $in: matchIds } })
-      .toArray();
+    const matchIds = playerEntries.map(e => e.matchId);
+    const matches = await Match.find({ _id: { $in: matchIds } });
 
     // Map matches for easy lookup
     const matchMap = {};
@@ -50,3 +45,4 @@ const getHistory = async (req, res) => {
 module.exports = {
   getHistory
 };
+

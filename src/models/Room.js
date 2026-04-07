@@ -1,20 +1,16 @@
-/**
- * Room Model (Native MongoDB Reference)
- * 
- * Document Structure:
- * - _id: ObjectId
- * - roomCode: String (unique)
- * - hostId: String
- * - isPrivate: Boolean
- * - currentPlayers: Number
- * - maxPlayers: Number
- * - status: String ('waiting', 'in_game', 'finished')
- * - specialRound: Boolean
- * - adminSelectedSpyId: String
- * - createdAt: Date
- * - updatedAt: Date
- */
+const mongoose = require('mongoose');
 
-module.exports = {
-  COLLECTION_NAME: 'rooms'
-};
+const roomSchema = new mongoose.Schema({
+  roomCode: { type: String, required: true, unique: true, index: true },
+  hostId: { type: String, required: true, index: true },
+  isPrivate: { type: Boolean, default: false },
+  currentPlayers: { type: Number, default: 0 },
+  maxPlayers: { type: Number, default: 12 },
+  status: { type: String, default: 'waiting' }, // waiting, in_game, finished
+  specialRound: { type: Boolean, default: false },
+  adminSelectedSpyId: { type: String },
+}, { timestamps: true });
+
+const Room = mongoose.model('Room', roomSchema);
+
+module.exports = Room;

@@ -1,5 +1,4 @@
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
+const User = require('../models/User');
 const economyService = require('./economyService');
 
 const SKILL_ANONYMOUS_VOTE = 'ANONYMOUS_VOTE';
@@ -14,42 +13,34 @@ function getSkillPrice(skillId) {
 }
 
 async function buySkill(userId, skillId) {
-  const db = getDb();
   const price = getSkillPrice(skillId);
-  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+  const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
   if (user.balance < price) throw new Error('Insufficient balance');
 
   await economyService.deductBalance(userId, price, 'BUY_SKILL', `Mua kỹ năng: ${skillId}`);
 
-  const inventoryKey = `inventory.${skillId}`;
-  await db.collection('users').updateOne(
-    { _id: new ObjectId(userId) },
-    { $inc: { [inventoryKey]: 1 } }
-  );
+  // Update inventory
+  const currentQuantity = user.inventory.get(skillId) || 0;
+  user.inventory.set(skillId, currentQuantity + 1);
+  await user.save();
 }
 
 async function getInventory(userId) {
-  const db = getDb();
-  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+  const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
-  return user.inventory || {};
+  return Object.fromEntries(user.inventory || new Map());
 }
 
 async function useSkill(userId, skillId) {
-  const db = getDb();
-  const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+  const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
 
-  const inventory = user.inventory || {};
-  const quantity = inventory[skillId] || 0;
+  const quantity = user.inventory.get(skillId) || 0;
   if (quantity <= 0) throw new Error('Skill not available in inventory');
 
-  const inventoryKey = `inventory.${skillId}`;
-  await db.collection('users').updateOne(
-    { _id: new ObjectId(userId) },
-    { $inc: { [inventoryKey]: -1 } }
-  );
+  user.inventory.set(skillId, quantity - 1);
+  await user.save();
 }
 
 module.exports = {
@@ -61,3 +52,4 @@ module.exports = {
   getInventory,
   useSkill,
 };
+

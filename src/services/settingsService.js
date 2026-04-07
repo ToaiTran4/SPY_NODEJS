@@ -1,31 +1,31 @@
-const { getDb } = require('../config/db');
+const Settings = require('../models/Settings');
 
 const DEFAULTS = {
-  describeDuration: 300,
-  discussDuration: 300,
-  voteDuration: 300,
-  roleCheckDuration: 300,
-  roleCheckResultDuration: 10,
+  describeDuration: 60,
+  discussDuration: 90,
+  voteDuration: 30,
+  roleCheckDuration: 30,
+  roleCheckResultDuration: 15,
 };
 
 async function find() {
-  return getDb().collection('game_settings').findOne({});
+  return Settings.findOne({});
 }
 
 async function getOrDefault() {
   const s = await find();
-  return s ? { ...DEFAULTS, ...s } : { ...DEFAULTS };
+  return s || { ...DEFAULTS };
 }
 
-async function save(settings) {
-  const db = getDb();
-  const existing = await db.collection('game_settings').findOne({});
-  if (existing) {
-    await db.collection('game_settings').updateOne({}, { $set: { ...settings, updatedAt: new Date() } });
+async function save(settingsData) {
+  let s = await find();
+  if (s) {
+    Object.assign(s, settingsData);
+    await s.save();
   } else {
-    await db.collection('game_settings').insertOne({ ...DEFAULTS, ...settings, updatedAt: new Date() });
+    s = await Settings.create({ ...DEFAULTS, ...settingsData });
   }
-  return getOrDefault();
+  return s;
 }
 
 async function getDescribeDuration() {
@@ -64,3 +64,4 @@ module.exports = {
   getRoleCheckDuration,
   getRoleCheckResultDuration,
 };
+

@@ -1,16 +1,13 @@
-/**
- * Keyword Model (Native MongoDB Reference)
- * 
- * Document Structure:
- * - _id: ObjectId
- * - civilianKeyword: String
- * - spyKeyword: String
- * - civilianDescription: String
- * - spyDescription: String
- * - isSpecial: Boolean (optional)
- * - createdAt: Date
- */
+const mongoose = require('mongoose');
 
-module.exports = {
-  COLLECTION_NAME: 'keyword_pairs'
-};
+const keywordSchema = new mongoose.Schema({
+  civilianKeyword: { type: String, required: true },
+  spyKeyword: { type: String, required: true },
+  civilianDescription: { type: String, required: true },
+  spyDescription: { type: String, required: true },
+  isSpecial: { type: Boolean, default: false },
+}, { collection: 'keyword_pairs', timestamps: true });
+
+const Keyword = mongoose.model('Keyword', keywordSchema);
+
+module.exports = Keyword;

@@ -1,7 +1,12 @@
 'use strict';
 
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
+const User = require('../models/User');
+const Match = require('../models/Match');
+const MatchPlayer = require('../models/MatchPlayer');
+const Room = require('../models/Room');
+const RoomPlayer = require('../models/RoomPlayer');
+const Keyword = require('../models/Keyword');
+const UserStats = require('../models/UserStats');
 const stateMachine = require('./gameStateMachine');
 const voteManager = require('./voteManager');
 const timerService = require('./timerService');
@@ -36,13 +41,12 @@ function shuffleArray(arr) {
 }
 
 async function startGame(roomId, hostUserId) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ _id: new ObjectId(roomId) });
+  const room = await Room.findById(roomId);
   if (!room) throw new Error('Room not found');
   if (room.hostId !== hostUserId) throw new Error('Only host can start the game');
   if (room.currentPlayers < 2) throw new Error('Need at least 2 players to start');
 
-  const roomPlayers = await db.collection('room_players').find({ roomId }).toArray();
+  const roomPlayers = await RoomPlayer.find({ roomId });
   // Entry fee is 0
   for (const rp of roomPlayers) {
     await economyService.deductEntryFee(rp.userId, 0);
@@ -50,20 +54,21 @@ async function startGame(roomId, hostUserId) {
 
   const keyword = await keywordService.getRandomKeyword();
 
-  const match = {
+  const match = new Match({
     roomId,
     civilianKeyword: keyword.civilianKeyword,
     spyKeyword: keyword.spyKeyword,
+    civilianDescription: keyword.civilianDescription,
+    spyDescription: keyword.spyDescription,
     isSpecialRound: room.specialRound,
     status: 'in_progress',
-    startedAt: new Date(),
     spyUserId: null,
     infectedUserId: null,
     winnerRole: null,
     totalRounds: 0,
-  };
-  const matchResult = await db.collection('matches').insertOne(match);
-  const matchId = matchResult.insertedId.toString();
+  });
+  await match.save();
+  const matchId = match._id.toString();
 
   const session = createSession(matchId, room, keyword);
 
@@ -87,35 +92,40 @@ async function startGame(roomId, hostUserId) {
   players.forEach(p => {
     p.role = p.userId === spyUserId ? 'spy' : 'civilian';
   });
-  // AI is always ai_civilian
-  players.find(p => p.isAi).role = 'ai_civilian';
+  
+  // AI Role
+  const aiPlayer = players.find(p => p.isAi);
+  if (aiPlayer) aiPlayer.role = 'ai_civilian';
 
   // Update match with spy
-  await db.collection('matches').updateOne(
-    { _id: matchResult.insertedId },
-    { $set: { spyUserId } }
-  );
+  match.spyUserId = spyUserId;
+  await match.save();
 
   // Reset admin selection
-  await db.collection('rooms').updateOne(
-    { _id: new ObjectId(roomId) },
-    { $set: { adminSelectedSpyId: null, specialRound: false, status: 'in_game', updatedAt: new Date() } }
-  );
+  room.adminSelectedSpyId = null;
+  room.specialRound = false;
+  room.status = 'in_game';
+  await room.save();
 
   // Create match players
   for (const p of players) {
     if (p.isAi) continue;
-    await db.collection('match_players').insertOne({
+    await MatchPlayer.create({
       matchId,
       userId: p.userId,
+      username: p.username,
+      displayName: p.displayName,
       color: p.color,
       role: p.role,
+      isAlive: true,
       eliminatedRound: null,
       isWinner: false,
       infected: false,
       afk: false,
+      scoreGained: 0,
     });
   }
+
 
   gameSessions.set(matchId, session);
 
@@ -465,8 +475,7 @@ async function infectPlayer(matchId, spyUserId, targetUserId) {
   session.infectUsed = true;
   session.infectedUserId = targetUserId;
 
-  const db = getDb();
-  await db.collection('match_players').updateOne(
+  await MatchPlayer.updateOne(
     { matchId: session.matchId, userId: targetUserId },
     { $set: { infected: true } }
   );
@@ -509,10 +518,9 @@ function eliminatePlayer(session, userId) {
     player.eliminatedRound = session.currentRound;
     session.eliminatedUserId = userId;
 
-    const db = getDb();
-    db.collection('match_players').updateOne(
+    MatchPlayer.updateOne(
       { matchId: session.matchId, userId },
-      { $set: { eliminatedRound: session.currentRound } }
+      { $set: { isAlive: false, eliminatedRound: session.currentRound } }
     ).catch(console.error);
   }
 
@@ -969,11 +977,7 @@ async function broadcastGameOver(session) {
   _io.sendToTopic(`/topic/match/${session.matchId}/game-over`, gameOver);
 
   // Cleanup room status
-  const db = getDb();
-  await db.collection('rooms').updateOne(
-    { _id: new ObjectId(session.roomId) },
-    { $set: { status: 'waiting', updatedAt: new Date() } }
-  );
+  await Room.findByIdAndUpdate(session.roomId, { $set: { status: 'waiting' } });
 
   // Delay session cleanup (allow players to view results/fetch state for 5 mins)
   setTimeout(() => {
@@ -1123,20 +1127,24 @@ function autoVoteForAi() {
 async function processEndGameRewards(session) {
   const matchId = session.matchId;
   const winner = session.winnerRole;
-  const db = getDb();
 
-  await db.collection('matches').updateOne(
-    { _id: new ObjectId(matchId) },
-    { $set: { winnerRole: winner, infectedUserId: session.infectedUserId, totalRounds: session.currentRound, status: 'finished', endedAt: new Date() } }
-  );
+  await Match.findByIdAndUpdate(matchId, { 
+    $set: { 
+      winnerRole: winner, 
+      infectedUserId: session.infectedUserId, 
+      totalRounds: session.currentRound, 
+      status: 'finished', 
+      endedAt: new Date() 
+    } 
+  });
 
   if (winner === 'spy') {
     const spyPlayer = getPlayer(session, session.spyUserId);
     if (spyPlayer && !spyPlayer.isAi) {
       spyPlayer.scoreGained = 25;
       await economyService.addReward(session.spyUserId, 25, 'WIN_REWARD', `Spy Thắng Ván: ${matchId}`, true);
-      await updateUserStats(session.spyUserId, true, 'spy', db);
-      await db.collection('match_players').updateOne({ matchId, userId: session.spyUserId }, { $set: { isWinner: true } });
+      await updateUserStats(session.spyUserId, true, 'spy');
+      await MatchPlayer.updateOne({ matchId, userId: session.spyUserId }, { $set: { isWinner: true } });
     }
 
     if (session.infectedUserId) {
@@ -1144,8 +1152,8 @@ async function processEndGameRewards(session) {
       if (infected && infected.isAlive && !infected.isAi) {
         infected.scoreGained = 25;
         await economyService.addReward(session.infectedUserId, 25, 'WIN_REWARD', `Infected Thắng Ván: ${matchId}`, true);
-        await updateUserStats(session.infectedUserId, true, 'civilian', db);
-        await db.collection('match_players').updateOne({ matchId, userId: session.infectedUserId }, { $set: { isWinner: true } });
+        await updateUserStats(session.infectedUserId, true, 'civilian');
+        await MatchPlayer.updateOne({ matchId, userId: session.infectedUserId }, { $set: { isWinner: true } });
       }
     }
 
@@ -1153,11 +1161,11 @@ async function processEndGameRewards(session) {
       if (p.isAi) continue;
       if (p.userId === session.spyUserId) continue;
       if (session.infectedUserId && p.userId === session.infectedUserId) continue;
-      const afkRecord = await db.collection('match_players').findOne({ matchId, userId: p.userId });
-      if (afkRecord && afkRecord.afk) continue;
+      const mp = await MatchPlayer.findOne({ matchId, userId: p.userId });
+      if (mp && mp.afk) continue;
       p.scoreGained = -5;
       await economyService.addReward(p.userId, -5, 'WIN_REWARD', `Thua ván: ${matchId}`, false);
-      await updateUserStats(p.userId, false, p.role, db);
+      await updateUserStats(p.userId, false, p.role);
     }
 
   } else if (winner === 'civilians') {
@@ -1167,43 +1175,44 @@ async function processEndGameRewards(session) {
       if (p.isAi) continue;
       p.scoreGained = 15;
       await economyService.addReward(p.userId, 15, 'WIN_REWARD', `Dân thường Thắng Ván: ${matchId}`, true);
-      await updateUserStats(p.userId, true, 'civilian', db);
-      await db.collection('match_players').updateOne({ matchId, userId: p.userId }, { $set: { isWinner: true } });
+      await updateUserStats(p.userId, true, 'civilian');
+      await MatchPlayer.updateOne({ matchId, userId: p.userId }, { $set: { isWinner: true } });
     }
 
     const spyPlayer = getPlayer(session, session.spyUserId);
     if (spyPlayer && !spyPlayer.isAi) {
       spyPlayer.scoreGained = -5;
       await economyService.addReward(session.spyUserId, -5, 'WIN_REWARD', `Thua ván: ${matchId}`, false);
-      await updateUserStats(session.spyUserId, false, 'spy', db);
+      await updateUserStats(session.spyUserId, false, 'spy');
     }
 
     if (session.infectedUserId) {
       const infected = getPlayer(session, session.infectedUserId);
       if (infected && !infected.isAi) {
-        const afkRecord = await db.collection('match_players').findOne({ matchId, userId: session.infectedUserId });
-        if (!afkRecord || !afkRecord.afk) {
+        const mp = await MatchPlayer.findOne({ matchId, userId: session.infectedUserId });
+        if (!mp || !mp.afk) {
           infected.scoreGained = -5;
           await economyService.addReward(session.infectedUserId, -5, 'WIN_REWARD', `Thua ván: ${matchId}`, false);
-          await updateUserStats(session.infectedUserId, false, 'civilian', db);
+          await updateUserStats(session.infectedUserId, false, 'civilian');
         }
       }
     }
   }
 }
 
-async function updateUserStats(userId, isWin, role, db) {
+async function updateUserStats(userId, isWin, role) {
   const inc = { totalGames: 1 };
   if (isWin) {
-    if (role === 'spy') inc.winsSpy = 1;
-    else inc.winsCivilian = 1;
+    if (role === 'spy') inc.spyWins = 1;
+    else inc.civilianWins = 1;
   }
-  if (role === 'spy') inc.timesAsSpy = 1;
+  if (role === 'spy') inc.spyGames = 1;
+  else inc.civilianGames = 1;
 
-  await db.collection('user_stats').updateOne(
+  await UserStats.findOneAndUpdate(
     { userId },
-    { $inc: inc, $set: { updatedAt: new Date() } },
-    { upsert: true }
+    { $inc: inc },
+    { upsert: true, new: true }
   );
 }
 
@@ -1217,8 +1226,7 @@ async function handlePlayerQuit(roomId, userId) {
     if (session.roomId === roomId) {
       const player = getPlayer(session, userId);
       if (player) {
-        const db = getDb();
-        await db.collection('match_players').updateOne(
+        await MatchPlayer.updateOne(
           { matchId: session.matchId, userId },
           { $set: { afk: true } }
         );
@@ -1233,13 +1241,10 @@ function adminSetSpy(roomId, userId, targetId) {
 }
 
 async function setAdminSpy(roomId, adminUserId, targetUserId) {
-  const db = getDb();
-  const room = await db.collection('rooms').findOne({ _id: new ObjectId(roomId) });
+  const room = await Room.findById(roomId);
   if (!room) throw new Error('Room not found');
-  await db.collection('rooms').updateOne(
-    { _id: new ObjectId(roomId) },
-    { $set: { adminSelectedSpyId: targetUserId, updatedAt: new Date() } }
-  );
+  room.adminSelectedSpyId = targetUserId;
+  await room.save();
 }
 
 function setGameState(matchId, newState) {
@@ -1266,11 +1271,7 @@ function adjustRewards(matchId, adminUserId, civilian, spy, infected) {
 
 function enableSpecialRound(roomId, userId) {
   // Called via REST, updates DB
-  const db = getDb();
-  db.collection('rooms').updateOne(
-    { _id: new ObjectId(roomId) },
-    { $set: { specialRound: true, updatedAt: new Date() } }
-  ).catch(console.error);
+  Room.findByIdAndUpdate(roomId, { $set: { specialRound: true } }).catch(console.error);
 
   if (_io) {
     _io.sendToTopic(`/topic/room/${roomId}`, {

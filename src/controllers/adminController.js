@@ -5,7 +5,7 @@ const economyService = require('../services/economyService');
 const gameService = require('../services/gameService');
 const settingsService = require('../services/settingsService');
 const aiService = require('../services/aiService');
-const { getDb } = require('../config/db');
+const Match = require('../models/Match');
 
 const getUsers = async (req, res) => {
   res.json(await userService.findAll());
@@ -105,17 +105,17 @@ const testAi = async (req, res) => {
 
 const getStats = async (req, res) => {
   try {
-    const db = getDb();
     res.json({
       total_users: await userService.countUsers(),
       active_rooms: await roomService.countActiveRooms(),
-      total_matches: await db.collection('matches').countDocuments(),
+      total_matches: await Match.countDocuments(),
       total_keywords: await keywordService.countKeywords(),
     });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 };
+
 
 const getKeywords = async (req, res) => {
   res.json(await keywordService.getAllKeywords());

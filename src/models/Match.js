@@ -1,23 +1,20 @@
-/**
- * Match Model (Native MongoDB Reference)
- * 
- * Document Structure:
- * - _id: ObjectId
- * - roomId: String
- * - civilianKeyword: String
- * - spyKeyword: String
- * - civilianDescription: String
- * - spyDescription: String
- * - spyUserId: String
- * - infectedUserId: String
- * - status: String ('in_progress', 'finished')
- * - winnerRole: String ('spy', 'civilian')
- * - totalRounds: Number
- * - isSpecialRound: Boolean
- * - startedAt: Date
- * - endedAt: Date
- */
+const mongoose = require('mongoose');
 
-module.exports = {
-  COLLECTION_NAME: 'matches'
-};
+const matchSchema = new mongoose.Schema({
+  roomId: { type: String, required: true, index: true },
+  civilianKeyword: { type: String },
+  spyKeyword: { type: String },
+  civilianDescription: { type: String },
+  spyDescription: { type: String },
+  spyUserId: { type: String, index: true },
+  infectedUserId: { type: String, index: true },
+  status: { type: String, default: 'in_progress' },
+  winnerRole: { type: String },
+  totalRounds: { type: Number, default: 0 },
+  isSpecialRound: { type: Boolean, default: false },
+  endedAt: { type: Date },
+}, { timestamps: { createdAt: 'startedAt', updatedAt: 'updatedAt' } });
+
+const Match = mongoose.model('Match', matchSchema);
+
+module.exports = Match;

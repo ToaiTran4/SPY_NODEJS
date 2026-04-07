@@ -1,15 +1,12 @@
-/**
- * Transaction Model (Native MongoDB Reference)
- * 
- * Document Structure:
- * - _id: ObjectId
- * - userId: String
- * - amount: Number
- * - type: String ('WIN_REWARD', 'DAILY_CHECKIN', 'BANKRUPTCY_RELIEF', 'SHOP_BUY', 'ADMIN_ADD', etc.)
- * - description: String
- * - createdAt: Date
- */
+const mongoose = require('mongoose');
 
-module.exports = {
-  COLLECTION_NAME: 'transactions'
-};
+const transactionSchema = new mongoose.Schema({
+  userId: { type: String, required: true, index: true },
+  amount: { type: Number, required: true },
+  type: { type: String, required: true }, // WIN_REWARD, DAILY_CHECKIN, etc.
+  description: { type: String },
+}, { timestamps: true });
+
+const Transaction = mongoose.model('Transaction', transactionSchema);
+
+module.exports = Transaction;

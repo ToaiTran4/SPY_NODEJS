@@ -1,7 +1,6 @@
 const jwtService = require('../services/jwtService');
 const { isBlacklisted } = require('../services/tokenBlacklistService');
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
+const User = require('../models/User');
 
 async function authMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -17,8 +16,7 @@ async function authMiddleware(req, res, next) {
 
   try {
     const decoded = jwtService.verifyToken(token);
-    const db = getDb();
-    const user = await db.collection('users').findOne({
+    const user = await User.findOne({
       $or: [{ username: decoded.sub }, { email: decoded.sub }]
     });
 
@@ -33,5 +31,6 @@ async function authMiddleware(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
+
 
 module.exports = authMiddleware;

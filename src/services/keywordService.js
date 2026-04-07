@@ -1,8 +1,7 @@
-const { getDb } = require('../config/db');
+const Keyword = require('../models/Keyword');
 
 async function getRandomKeyword() {
-  const db = getDb();
-  const count = await db.collection('keyword_pairs').countDocuments();
+  const count = await Keyword.countDocuments();
   if (count === 0) {
     // Default fallback
     return {
@@ -14,26 +13,23 @@ async function getRandomKeyword() {
     };
   }
   const skip = Math.floor(Math.random() * count);
-  const [kw] = await db.collection('keyword_pairs').find({}).skip(skip).limit(1).toArray();
-  return kw;
+  return Keyword.findOne({}).skip(skip);
 }
 
 async function getAllKeywords() {
-  return getDb().collection('keyword_pairs').find({}).toArray();
+  return Keyword.find({});
 }
 
 async function addKeyword(pair) {
-  const result = await getDb().collection('keyword_pairs').insertOne(pair);
-  return { ...pair, _id: result.insertedId };
+  return Keyword.create(pair);
 }
 
 async function deleteKeyword(id) {
-  const { ObjectId } = require('mongodb');
-  return getDb().collection('keyword_pairs').deleteOne({ _id: new ObjectId(id) });
+  return Keyword.findByIdAndDelete(id);
 }
 
 async function countKeywords() {
-  return getDb().collection('keyword_pairs').countDocuments();
+  return Keyword.countDocuments();
 }
 
 module.exports = { getRandomKeyword, getAllKeywords, addKeyword, deleteKeyword, countKeywords };

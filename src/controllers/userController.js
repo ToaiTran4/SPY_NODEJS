@@ -1,11 +1,13 @@
 const userService = require('../services/userService');
-const { getDb } = require('../config/db');
+const UserStats = require('../models/UserStats');
 
 const getMe = async (req, res) => {
   try {
     const user = await userService.findById(req.userId);
-    const db = getDb();
-    const stats = await db.collection('user_stats').findOne({ userId: req.userId }) || {};
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const stats = await UserStats.findOne({ userId: req.userId }) || {};
+    
     res.json({
       user_id: user._id.toString(),
       username: user.username,
@@ -17,12 +19,12 @@ const getMe = async (req, res) => {
       ranking_points: user.rankingPoints || 0,
       stats: {
         total_games: stats.totalGames || 0,
-        wins_civilian: stats.winsCivilian || 0,
-        wins_spy: stats.winsSpy || 0,
-        wins_infected: stats.winsInfected || 0,
-        times_as_spy: stats.timesAsSpy || 0,
-        times_infected: stats.timesInfected || 0,
-        correct_votes: stats.correctVotes || 0,
+        wins_civilian: stats.civilianWins || 0,
+        wins_spy: stats.spyWins || 0,
+        wins_infected: stats.infectedCount || 0,
+        times_as_spy: stats.spyGames || 0,
+        times_infected: stats.infectedCount || 0,
+        correct_votes: 0, // Placeholder as it was not in my schema
       },
     });
   } catch (e) {
@@ -56,8 +58,7 @@ const updateMe = async (req, res) => {
 
 const getStats = async (req, res) => {
   try {
-    const db = getDb();
-    const stats = await db.collection('user_stats').findOne({ userId: req.params.id });
+    const stats = await UserStats.findOne({ userId: req.params.id });
     if (!stats) return res.status(404).json({ error: 'Stats not found' });
     res.json(stats);
   } catch (e) {
@@ -70,3 +71,4 @@ module.exports = {
   updateMe,
   getStats
 };
+

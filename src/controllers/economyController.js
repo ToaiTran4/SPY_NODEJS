@@ -1,6 +1,6 @@
 const economyService = require('../services/economyService');
 const userService = require('../services/userService');
-const { getDb } = require('../config/db');
+const Transaction = require('../models/Transaction');
 
 const getBalance = async (req, res) => {
   try {
@@ -83,17 +83,16 @@ const getLeaderboard = async (req, res) => {
 
 const getTransactions = async (req, res) => {
   try {
-    const db = getDb();
-    const transactions = await db.collection('transactions')
+    const transactions = await Transaction
       .find({ userId: req.userId })
       .sort({ createdAt: -1 })
-      .limit(50)
-      .toArray();
+      .limit(50);
     res.json(transactions);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 };
+
 
 module.exports = {
   getBalance,

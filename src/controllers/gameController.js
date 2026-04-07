@@ -1,6 +1,6 @@
 const gameService = require('../services/gameService');
 const skillService = require('../services/skillService');
-const { getDb } = require('../config/db');
+const User = require('../models/User');
 
 const startGame = async (req, res) => {
   try {
@@ -135,13 +135,19 @@ const useAnonymousVoteSkill = async (req, res) => {
 
 const getShopInventory = async (req, res) => {
   try {
-    const db = getDb();
-    const inv = await db.collection('user_inventory').find({ userId: req.userId }).toArray();
-    res.json(inv.map(item => ({
-      skill_id: item.skillId,
-      skill_type: item.skillType,
-      quantity: item.quantity || 1,
-    })));
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    const inventory = user.inventory || new Map();
+    const result = [];
+    inventory.forEach((quantity, skillId) => {
+      result.push({
+        skill_id: skillId,
+        skill_type: skillId === 'SPECIAL_ROUND' ? 'ROOM' : 'MATCH',
+        quantity: quantity,
+      });
+    });
+    res.json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
