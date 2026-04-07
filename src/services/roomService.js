@@ -239,6 +239,7 @@ async function broadcastRoomUpdate(room) {
     host_id: room.hostId,
     current_players: room.currentPlayers,
     status: room.status,
+    is_special_round: room.specialRound,
     players: players.map(p => ({ user_id: p.userId, display_name: p.displayName })),
   });
 }
@@ -253,6 +254,7 @@ function broadcastLobbyRoomEvent(room, type) {
     max_players: room.maxPlayers,
     status: room.status,
     is_private: room.isPrivate,
+    is_special_round: room.specialRound,
   });
 }
 

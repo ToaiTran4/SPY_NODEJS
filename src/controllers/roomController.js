@@ -13,6 +13,7 @@ const createRoom = async (req, res) => {
       host: { user_id: req.userId, display_name: user.displayName || user.username },
       status: room.status,
       current_players: room.currentPlayers,
+      is_special_round: room.specialRound,
     });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -63,6 +64,7 @@ const getRoomByCode = async (req, res) => {
       max_players: room.maxPlayers,
       status: room.status,
       is_private: room.isPrivate,
+      is_special_round: room.specialRound,
     });
   } catch (e) {
     res.status(404).json({ error: e.message });
@@ -81,6 +83,7 @@ const getRoomById = async (req, res) => {
       max_players: room.maxPlayers,
       status: room.status,
       is_private: room.isPrivate,
+      is_special_round: room.specialRound,
       players: players.map(p => ({ user_id: p.userId, display_name: p.displayName })),
     });
   } catch (e) {
@@ -96,6 +99,7 @@ const joinRoom = async (req, res) => {
       room_id: room._id.toString(),
       room_code: room.roomCode,
       current_players: room.currentPlayers,
+      is_special_round: room.specialRound,
       players: players.map(p => ({ user_id: p.userId, display_name: p.displayName })),
     });
   } catch (e) {

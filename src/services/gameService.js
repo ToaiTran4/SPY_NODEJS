@@ -151,8 +151,8 @@ function createSession(matchId, room, keyword) {
     currentRound: 1,
     civilianKeyword: keyword.civilianKeyword,
     spyKeyword: keyword.spyKeyword,
-    civilianDescription: keyword.civilianDescription || null,
-    spyDescription: keyword.spyDescription || null,
+    civilianDescription: keyword.civilianDescription || keyword.civilianKeyword || 'Không có mô tả',
+    spyDescription: keyword.spyDescription || keyword.spyKeyword || 'Không có mô tả',
     isSpecialRound: room.specialRound,
     isAnonymousVoting: false,
     keywordPairId: keyword._id?.toString() || null,
@@ -481,12 +481,18 @@ async function infectPlayer(matchId, spyUserId, targetUserId) {
   );
 
   if (target.username && _io) {
-    _io.sendToUser(target.username, '/queue/infection', {
+    const infectMsg = {
       type: 'INFECTED',
       spy_keyword: session.spyKeyword,
       win_condition: 'Gián Điệp thắng (Dân Thường còn 1) VÀ bạn vẫn còn sống',
       message: 'Bạn đã bị Tha Hóa!',
-    });
+    };
+
+    if (session.isSpecialRound) {
+      infectMsg.description = session.spyDescription;
+    }
+
+    _io.sendToUser(target.username, '/queue/infection', infectMsg);
   }
 
   return { infected: true, target: target.displayName };
@@ -832,16 +838,24 @@ function broadcastRoles(session) {
   for (const player of session.players) {
     if (player.isAi) continue;
     const isSpyTeam = player.role === 'spy' || player.isInfected;
-    console.log(`[BROADCAST-ROLE] Sending to ${player.username}: role=${player.role}, keyword=${isSpyTeam ? session.spyKeyword : session.civilianKeyword}, ability=${isSpyTeam ? session.abilityType : null}`);
-    _io.sendToUser(player.username, '/queue/role', {
+    
+    const roleMsg = {
       match_id: session.matchId,
       round: session.currentRound,
-      role: player.isInfected ? 'infected' : player.role,
+      role: 'unknown',
       color: player.color,
       keyword: isSpyTeam ? session.spyKeyword : session.civilianKeyword,
       your_keyword: isSpyTeam ? session.spyKeyword : session.civilianKeyword,
       selected_ability: isSpyTeam ? session.abilityType : null,
-    });
+    };
+
+    if (session.isSpecialRound) {
+      roleMsg.description = isSpyTeam ? session.spyDescription : session.civilianDescription;
+      roleMsg.your_description = roleMsg.description;
+    }
+
+    console.log(`[V2-BROADCAST-ROLE] Sending to ${player.username}: role=${roleMsg.role}, keyword=${roleMsg.keyword}, desc=${roleMsg.description || 'none'}`);
+    _io.sendToUser(player.username, '/queue/role', roleMsg);
   }
 }
 
@@ -1277,6 +1291,7 @@ function enableSpecialRound(roomId, userId) {
     _io.sendToTopic(`/topic/room/${roomId}`, {
       type: 'SPECIAL_ROUND_ENABLED',
       room_id: roomId,
+      is_special_round: true,
     });
   }
 }

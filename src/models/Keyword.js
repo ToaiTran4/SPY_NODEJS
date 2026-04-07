@@ -6,6 +6,7 @@ const keywordSchema = new mongoose.Schema({
   civilianDescription: { type: String, required: true },
   spyDescription: { type: String, required: true },
   isSpecial: { type: Boolean, default: false },
+  category: { type: String },
 }, { collection: 'keyword_pairs', timestamps: true });
 
 const Keyword = mongoose.model('Keyword', keywordSchema);

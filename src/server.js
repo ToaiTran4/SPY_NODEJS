@@ -13,6 +13,10 @@ async function main() {
   // Connect to MongoDB
   await connectDb();
 
+  // Seed Keywords from Java version if empty
+  const keywordService = require('./services/keywordService');
+  await keywordService.seedKeywords();
+
   // Create HTTP server
   const server = http.createServer(app);
 
