@@ -32,7 +32,36 @@ const getGameState = async (req, res) => {
 const submitDescription = async (req, res) => {
   try {
     const content = req.body.content;
-    await gameService.submitDescription(req.params.matchId, req.userId, content);
+    const matchId = req.params.matchId;
+    const userId = req.userId;
+
+    // ---- KEYWORD FILTER ----
+    const Match = require('../models/Match');
+    const MatchPlayer = require('../models/MatchPlayer');
+
+    const match = await Match.findById(matchId);
+    if (match) {
+      const player = await MatchPlayer.findOne({ matchId, userId });
+      if (player) {
+        const keyword = player.role === 'spy' ? match.spyKeyword : match.civilianKeyword;
+
+        const normalize = (str) =>
+          str.toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/gi, 'd')
+            .trim();
+
+        if (keyword && normalize(content).includes(normalize(keyword))) {
+          return res.status(400).json({
+            error: '🚫 Bạn không được nhắc đến từ khóa! Hãy mô tả khéo hơn.',
+          });
+        }
+      }
+    }
+    // ---- HẾT FILTER ----
+
+    await gameService.submitDescription(matchId, userId, content);
     res.json({ submitted: true, word_count: content.trim().split(/\s+/).length });
   } catch (e) {
     res.status(400).json({ error: e.message });
