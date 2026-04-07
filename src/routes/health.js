@@ -1,3 +1,6 @@
 const router = require('express').Router();
-router.get('/', (req, res) => res.json({ status: 'ok', service: 'spy-game-backend-nodejs', time: new Date() }));
+const healthController = require('../controllers/healthController');
+
+router.get('/', healthController.getHealth);
+
 module.exports = router;

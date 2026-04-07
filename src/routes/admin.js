@@ -1,180 +1,59 @@
 const router = require('express').Router();
 const auth = require('../middleware/auth');
-const userService = require('../services/userService');
-const roomService = require('../services/roomService');
-const keywordService = require('../services/keywordService');
-const economyService = require('../services/economyService');
-const gameService = require('../services/gameService');
-const settingsService = require('../services/settingsService');
-const aiService = require('../services/aiService');
-const { getDb } = require('../config/db');
-const { ObjectId } = require('mongodb');
+const adminController = require('../controllers/adminController');
 
 // GET /api/admin/users
-router.get('/users', auth, async (req, res) => {
-  res.json(await userService.findAll());
-});
+router.get('/users', auth, adminController.getUsers);
 
 // GET /api/admin/users/count
-router.get('/users/count', auth, async (req, res) => {
-  res.json(await userService.countUsers());
-});
+router.get('/users/count', auth, adminController.getUsersCount);
 
 // PATCH /api/admin/users/:id/ban
-router.patch('/users/:id/ban', auth, async (req, res) => {
-  try {
-    const active = req.body.active !== undefined ? Boolean(req.body.active) : true;
-    res.json(await userService.updateActiveStatus(req.params.id, active));
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.patch('/users/:id/ban', auth, adminController.banUser);
 
 // PATCH /api/admin/users/:id/role
-router.patch('/users/:id/role', auth, async (req, res) => {
-  try {
-    const role = req.body.role;
-    if (!role) return res.status(400).json({ error: 'role required' });
-    res.json(await userService.updateRole(req.params.id, role.toUpperCase().startsWith('ROLE_') ? role : `ROLE_${role.toUpperCase()}`));
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.patch('/users/:id/role', auth, adminController.updateUserRole);
 
 // POST /api/admin/users/:id/reset-password
-router.post('/users/:id/reset-password', auth, async (req, res) => {
-  try {
-    const newPassword = req.body.new_password;
-    if (!newPassword) return res.status(400).json({ error: 'New password is required' });
-    await userService.resetPassword(req.params.id, newPassword);
-    res.json({ message: 'Password reset successfully' });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.post('/users/:id/reset-password', auth, adminController.resetUserPassword);
 
 // POST /api/admin/users/add-coins
-router.post('/users/add-coins', auth, async (req, res) => {
-  try {
-    const { identifier, amount } = req.body;
-    if (!identifier || amount == null) return res.status(400).json({ error: 'identifier and amount required' });
-    const user = await userService.findByUsernameOrEmail(identifier);
-    if (!user) throw new Error(`User not found: ${identifier}`);
-    await economyService.addReward(user._id.toString(), amount, 'ADMIN_ADD', 'Admin tặng xu (Test)', false);
-    const updated = await userService.findById(user._id.toString());
-    res.json({ message: `Added ${amount} coins to ${identifier}`, new_balance: updated.balance });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.post('/users/add-coins', auth, adminController.addCoins);
 
 // GET /api/admin/rooms
-router.get('/rooms', auth, async (req, res) => {
-  res.json(await roomService.findAllRooms());
-});
+router.get('/rooms', auth, adminController.getRooms);
 
 // DELETE /api/admin/rooms/:id
-router.delete('/rooms/:id', auth, async (req, res) => {
-  try {
-    await roomService.deleteRoom(req.params.id);
-    res.json({ message: 'Room ended/deleted successfully' });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.delete('/rooms/:id', auth, adminController.deleteRoom);
 
 // POST /api/admin/rooms/:id/add-player
-router.post('/rooms/:id/add-player', auth, async (req, res) => {
-  try {
-    const identifier = req.body.identifier;
-    if (!identifier) return res.status(400).json({ error: 'identifier required' });
-    const room = await roomService.addPlayerAdmin(req.params.id, identifier);
-    res.json(room);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.post('/rooms/:id/add-player', auth, adminController.addPlayerToRoom);
 
 // POST /api/admin/matches/:matchId/skip-phase
-router.post('/matches/:matchId/skip-phase', auth, async (req, res) => {
-  try {
-    await gameService.skipPhase(req.params.matchId);
-    res.json({ message: 'Phase skipped successfully' });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.post('/matches/:matchId/skip-phase', auth, adminController.skipMatchPhase);
 
 // POST /api/admin/ai-test
-router.post('/ai-test', auth, async (req, res) => {
-  try {
-    const { prompt } = req.body;
-    if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-    const response = await aiService.askAi(prompt);
-    res.json({ status: 'success', prompt, response });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.post('/ai-test', auth, adminController.testAi);
 
 // GET /api/admin/stats
-router.get('/stats', auth, async (req, res) => {
-  try {
-    const db = getDb();
-    res.json({
-      total_users: await userService.countUsers(),
-      active_rooms: await roomService.countActiveRooms(),
-      total_matches: await db.collection('matches').countDocuments(),
-      total_keywords: await keywordService.countKeywords(),
-    });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.get('/stats', auth, adminController.getStats);
 
 // GET /api/admin/keywords
-router.get('/keywords', auth, async (req, res) => {
-  res.json(await keywordService.getAllKeywords());
-});
+router.get('/keywords', auth, adminController.getKeywords);
 
 // POST /api/admin/keywords
-router.post('/keywords', auth, async (req, res) => {
-  try {
-    const kw = await keywordService.addKeyword(req.body);
-    res.json(kw);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.post('/keywords', auth, adminController.addKeyword);
 
 // DELETE /api/admin/keywords/:id
-router.delete('/keywords/:id', auth, async (req, res) => {
-  try {
-    await keywordService.deleteKeyword(req.params.id);
-    res.status(204).send();
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.delete('/keywords/:id', auth, adminController.deleteKeyword);
 
 // GET /api/admin/settings
-router.get('/settings', auth, async (req, res) => {
-  res.json(await settingsService.getOrDefault());
-});
+router.get('/settings', auth, adminController.getSettings);
 
 // PATCH /api/admin/settings
-router.patch('/settings', auth, async (req, res) => {
-  try {
-    const current = await settingsService.getOrDefault();
-    const fields = ['describe_duration', 'discuss_duration', 'vote_duration', 'role_check_duration', 'role_check_result_duration'];
-    const keys = ['describeDuration', 'discussDuration', 'voteDuration', 'roleCheckDuration', 'roleCheckResultDuration'];
-    fields.forEach((f, i) => {
-      if (req.body[f] != null) current[keys[i]] = Number(req.body[f]);
-    });
-    res.json(await settingsService.save(current));
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+router.patch('/settings', auth, adminController.updateSettings);
+
+module.exports = router;
+
 
 module.exports = router;
