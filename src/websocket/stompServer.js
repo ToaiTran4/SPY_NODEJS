@@ -247,11 +247,51 @@ function createStompServer(server) {
 
             if (dest.startsWith('/app/game.sendMessage/')) {
               const roomId = dest.split('/app/game.sendMessage/')[1];
-              const { getRoomService } = require('../services/roomService');
               const players = await require('../services/roomService').getPlayersInRoom(roomId).catch(() => []);
               const sender = payload.sender || payload.content;
               const isMember = players.some(p => p.displayName === sender || p.username === sender || p.username === username);
+
               if (isMember) {
+                // ---- DEBUG ----
+                console.log('[FILTER] username từ JWT:', username);
+                console.log('[FILTER] payload.content:', payload.content);
+
+                const Match = require('../models/Match');
+                const MatchPlayer = require('../models/MatchPlayer');
+
+                const match = await Match.findOne({ roomId, status: 'in_progress' });
+                console.log('[FILTER] match tìm được:', match ? match._id : 'KHÔNG TÌM THẤY');
+
+                if (match) {
+                  const player = await MatchPlayer.findOne({ matchId: match._id.toString(), username });
+                  console.log('[FILTER] player tìm được:', player ? `role=${player.role}` : 'KHÔNG TÌM THẤY');
+
+                  if (player) {
+                    const keyword = player.role === 'spy' ? match.spyKeyword : match.civilianKeyword;
+                    console.log('[FILTER] keyword:', keyword);
+
+                    const normalize = (str) =>
+                      str.toLowerCase()
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .replace(/đ/gi, 'd')
+                        .trim();
+
+                    const msgNorm = normalize(payload.content || '');
+                    const kwNorm = normalize(keyword || '');
+                    console.log('[FILTER] msgNorm:', msgNorm, '| kwNorm:', kwNorm);
+                    console.log('[FILTER] includes?', msgNorm.includes(kwNorm));
+
+                    if (keyword && msgNorm.includes(kwNorm)) {
+                      sendToUser(username, '/queue/errors', {
+                        type: 'KEYWORD_VIOLATION',
+                        message: '🚫 Bạn không được nhắc đến từ khóa! Hãy mô tả khéo hơn.',
+                      });
+                      break;
+                    }
+                  }
+                }
+
                 sendToTopic(`/topic/room/${roomId}`, payload);
               }
             } else if (dest.startsWith('/app/game.addUser/')) {
