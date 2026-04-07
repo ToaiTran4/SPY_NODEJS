@@ -2,6 +2,14 @@ const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const UserStats = require('../models/UserStats');
 
+/**
+ * Lấy chuỗi ngày YYYY-MM-DD theo múi giờ Việt Nam (GMT+7)
+ */
+function getVietnameseDateString(date = new Date()) {
+  const vnTime = new Date(date.getTime() + 7 * 60 * 60 * 1000);
+  return vnTime.toISOString().split('T')[0];
+}
+
 async function updateBalance(userId, delta) {
   return User.findByIdAndUpdate(userId, { $inc: { balance: delta } }, { new: true });
 }
@@ -55,28 +63,29 @@ async function hasCheckedInToday(userId) {
   const user = await User.findById(userId);
   if (!user || !user.lastCheckinDate) return false;
   
-  const today = new Date().toISOString().split('T')[0];
-  const lastDate = user.lastCheckinDate.toISOString().split('T')[0];
-  return lastDate === today;
+  const todayStr = getVietnameseDateString();
+  const lastDateStr = getVietnameseDateString(user.lastCheckinDate);
+  return lastDateStr === todayStr;
 }
 
 async function dailyCheckin(userId) {
   const user = await User.findById(userId);
   if (!user) throw new Error(`User not found: ${userId}`);
 
-  const today = new Date().toISOString().split('T')[0];
-  const lastDate = user.lastCheckinDate 
-    ? user.lastCheckinDate.toISOString().split('T')[0]
+  const todayStr = getVietnameseDateString();
+  const lastDateStr = user.lastCheckinDate 
+    ? getVietnameseDateString(user.lastCheckinDate)
     : null;
 
-  if (lastDate === today) throw new Error('Bạn đã điểm danh hôm nay rồi!');
+  if (lastDateStr === todayStr) throw new Error('Bạn đã điểm danh hôm nay rồi!');
 
+  // Tính ngày hôm qua (GMT+7)
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  const yesterdayStr = getVietnameseDateString(yesterday);
 
   let newStreak = 1;
-  if (lastDate === yesterdayStr) {
+  if (lastDateStr === yesterdayStr) {
     newStreak = ((user.checkinStreak || 0) % 7) + 1;
   }
 
